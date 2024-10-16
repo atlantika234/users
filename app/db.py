@@ -1,10 +1,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+from settings import settings
 
-db_url = "postgresql://atlantika234:timur.s0805@localhost:5532/users_test"
 
-engine = create_engine(db_url)
+engine = create_engine(settings.db.CONNECTION_STRING)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -14,5 +14,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
