@@ -16,7 +16,28 @@ class DBSettings(BaseModel):
     def CONNECTION_STRING(self) -> str:
         return f"{self.ENGINE}://{self.USER}:{self.PASSWORD}@{self.HOST}:{self.PORT}/{self.NAME}"
 
+
+class AppSettings(BaseModel):
+    NAME: str = "authText"
+    VERSION: str = '0.0.1'
+    HOST: str = os.getenv("APP_HOST", "localhost")
+    PORT: int = int(os.getenv("APP_PORT", 8080))
+    ENV: str = os.getenv("APP_ENV", "development")
+    SECRET_KEY: str = os.getenv('SECRET_KEY')
+    BASE_URL_PREFIX: str = '/develop'
+
+    @property
+    def LOGIN_URL(self) -> str:
+        return f"{self.BASE_URL_PREFIX}/session"
+
+class TokenSettings(BaseModel):
+    ALGORITHM: str = "HS256"
+    DEFAULT_EXPIRED: str = 60
+    ACCESS_EXPIRED: int = 15
+
 class Settings(BaseModel):
+    app: AppSettings = AppSettings()
     db: DBSettings = DBSettings()
+    token: TokenSettings = TokenSettings()
 
 settings = Settings()
