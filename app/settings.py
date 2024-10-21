@@ -33,7 +33,8 @@ class AppSettings(BaseModel):
 class TokenSettings(BaseModel):
     ALGORITHM: str = "HS256"
     DEFAULT_EXPIRED: str = 60
-    ACCESS_EXPIRED: int = 15
+    ACCESS_EXPIRED: int = 1
+    REFRESH_EXPIRED: int = 7 * 1440
 
 class Settings(BaseModel):
     app: AppSettings = AppSettings()

@@ -2,11 +2,14 @@ from enum import Enum
 from typing import Optional, Callable, List, Annotated
 from fastapi import HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from users.models import User
+from sqlalchemy.orm import joinedload
+
+from users.models import User, Token
+from users.shemas import TokenLoginResponse
 from sqlalchemy import or_
 from jose import JWTError, jwt
 from app.settings import settings
-from app.db import Session
+from app.db import Session, get_db as db
 from users import shemas
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
@@ -49,8 +52,7 @@ class Token:
         token = self.coder.encode(to_encode_data, self.secret, algorithm=self.config.ALGORITHM)
         return {"token": token, "expired_at": expired, "scope": scope.value}
 
-    async def create_access_token(self, data: dict, expires_delta: Optional[float] = None):
-        return await self.create(data=data, scope=TokenScopes.ACCESS, expires_delta=expires_delta or self.config.ACCESS_EXPIRED)
+
 
     async def decode(self, token: str, scope: TokenScopes) -> dict:
         try:
@@ -67,12 +69,30 @@ class Token:
                 detail="Could not validate credentials",
             )
 
+    async def create_access_token(self, data: dict, expires_delta: Optional[float] = None):
+        return await self.create(data=data, scope=TokenScopes.ACCESS, expires_delta=expires_delta or self.config.ACCESS_EXPIRED)
+
+    async def create_refresh_token(self, data: dict, expires_delta: Optional[float] = None):
+        return await self.create(data=data, scope=TokenScopes.REFRESH, expires_delta=expires_delta or self.config.REFRESH_EXPIRED)
+
     async def decode_access(self, token: str) -> dict:
         return await self.decode(token, TokenScopes.ACCESS)
 
+    async def decode_refresh(self, token: str) -> dict:
+        return await self.decode(token, TokenScopes.REFRESH)
+
+
+
 class Auth:
+    TokensModel = Token
     oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
     invalid_credential_error = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid username or password')
+    not_found_error = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
 
     def __init__(self, password: Password, token: Token) -> None:
         self.password = password
@@ -91,13 +111,17 @@ class Auth:
             raise self.invalid_credential_error
         return await self.__generate_tokens(user)
 
-    async def __get_user(self, name: str, db: Session) -> Optional[User]:
-        return db.query(User).filter(or_(
-            User.email == name,
-            User.name == name
-        )).first()
+    async def __get_user(self, email: str, db: Session) -> Optional[User]:
+        return db.query(User).filter(
+            User.email == email,
+        ).first()
 
     async def __generate_tokens(self, user: User) -> shemas.TokenLoginResponse:
+        refresh_token = await self.token.create_refresh_token({"email": user.email})
+        token = self.TokensModel(token=refresh_token["token"], expired_at=refresh_token["expired_at"])
+        user.tokens.append(token)
+        db.commit()
+        db.refresh(token)
         access_token = await self.token.create_access_token({"email": user.email})
 
         return shemas.TokenLoginResponse(
@@ -106,12 +130,31 @@ class Auth:
             token_type="bearer"
         )
 
+    async def refresh_token(self, refresh_token_str: str, db: Session) -> shemas.TokenLoginResponse:
+        payload = await self.token.decode_refresh(refresh_token_str)
+        refresh_token = db.query(self.TokensModel).filter(self.TokensModel.token == refresh_token_str).options(joinedload(self.TokensModel.user)).first()
+        user = await self.__get_user(payload["email"], db)
+        if refresh_token:
+            db.delete(refresh_token)
+            db.commit()
+        if user is None or refresh_token is None or refresh_token.user != user:
+            raise self.credentials_exception
+        return await self.__generate_tokens(user, db)
+
+
+    async def __call__(self, token: str = Depends(oauth2_scheme), db: Session = Depends(db)) -> User:
+        pyload = await self.token.decode_access(token)
+        if pyload["email"] is None:
+            raise self.credentials_exception
+        user = await self.__get_user(pyload["email"], db)
+        if user is None:
+            raise self.not_found_error
+
+        return user
+
 auth: Auth = Auth(
     password=Password(CryptContext(schemes=['bcrypt'], deprecated='auto')),
     token=Token(secret=settings.app.SECRET_KEY, config=settings.token, coder=TokenCoder(encode=jwt.encode, decode=jwt.decode, error=JWTError))
 )
 
-def get_auth_dep() -> Auth:
-    return auth
-
-AuthDep = Annotated[Auth, Depends(get_auth_dep)]
+AuthDep = Annotated[auth, Depends(auth)]

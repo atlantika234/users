@@ -1,3 +1,6 @@
+from typing import Optional, List
+
+from app.db import DBConnectionDep
 from users.models import User
 from sqlalchemy.orm import Session
 import users.shemas as shemas
@@ -20,6 +23,19 @@ class SessionController:
             print(e)
 
         return user
+
+
+class UsersController:
+    base_model = User
+
+    def get_users(self, db: DBConnectionDep) -> Optional[List[User]]:
+        return db.query(self.base_model).all()
+
+    def get_user_by_id(self, user_id: int, db: DBConnectionDep) -> User | None:
+        return db.query(self.base_model).filter(self.base_model.id == user_id).first()
+
+    def get_user_by_name(self, user_name: str, db: DBConnectionDep) -> User | None:
+        return db.query(self.base_model).filter(self.base_model.name == user_name).first()
 
 
 class ProfileController:
